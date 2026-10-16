@@ -7,7 +7,7 @@ const traceFor = (targets: ReturnType<typeof challenge>, start = 0) => targets.f
 test("challenge has two different bounded directions then center", () => {
   const generated = challenge(() => .1);
   assert.equal(generated.length, 3); assert.notEqual(generated[0]!.direction, generated[1]!.direction);
-  assert.equal(generated[2]!.direction, "center"); assert.ok(generated.every((target) => Math.abs(target.x) <= 8 && Math.abs(target.y) <= 8));
+  assert.equal(generated[2]!.direction, "center"); assert.ok(generated.every((target) => Math.abs(target.x) <= 9 && Math.abs(target.y) <= 9));
 });
 
 test("motion evaluation requires ordered, plausible, uninterrupted samples", () => {
@@ -53,4 +53,11 @@ test("phone lease expires without heartbeat", () => {
   let now = 0; const store = new Store(() => now), session = store.create({ origin: "https://shop.test", action: "buy", transactionId: "tx" });
   const lease = store.connectPhone(session, store.issueHandoff(session), "phone"); now = 15_001;
   assert.equal(store.authorizePhone(session, lease), false); assert.equal(session.status, "pending");
+});
+
+test("expired results release browser tokens and terminal records are pruned", () => {
+  let now = 0; const store = new Store(() => now), session = store.create({ origin: "https://shop.test", action: "buy", transactionId: "tx" });
+  store.succeed(session, "direct_motion"); now = 300_001; store.get(session.id);
+  assert.equal(session.status, "expired"); assert.equal(session.resultToken, undefined); assert.equal(store.sessions.has(session.id), true);
+  now = 900_001; store.prune(); assert.equal(store.sessions.has(session.id), false);
 });

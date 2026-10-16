@@ -1,43 +1,43 @@
-# Motion Presence Verification MVP
+# Motion Presence Verification
 
-This is a local, runnable implementation of the product spec. It provides one
-Node service for the verification API, widget, phone handoff, and demo merchant.
-State is deliberately in memory for the MVP; restarting the process invalidates
-all sessions and results.
+A complete local product experience for confirming a fresh physical interaction before a sensitive action. Visitors can gently tilt a motion-capable laptop or phone, hand off from a computer to a phone with a one-time QR link, or use a merchant-controlled motion-independent route.
 
-## Run
+The security claim is intentionally narrow: this confirms satisfaction of a fresh challenge. It does not prove humanity or that readings came from unmodified physical hardware.
 
-Requires Node 22+.
+## Run the product
+
+Requires Node.js 22 or newer.
 
 ```sh
 npm install
-npm test
-npm run typecheck
-npm run test:e2e
-npm start
+npx playwright install chromium
+MPV_DEMO_ALTERNATIVE_CODE=246810 npm start
 ```
 
-Open <http://localhost:3000>. The motion-independent alternative requires a
-merchant-controlled one-time support code (`MPV_DEMO_ALTERNATIVE_CODE`) and is
-disabled when that variable is absent, so a browser callback alone cannot
-authorize the action. To scan the QR code on a physical phone,
-set `MPV_ORIGIN` to an HTTPS origin reachable by that phone (device-motion APIs
-generally require a secure context).
+Open <http://localhost:3000> for the checkout and verification experience. Open <http://localhost:3000/operator> for privacy-safe aggregate activity. The demo support code is `246810` only when set explicitly as shown; the route is disabled otherwise.
 
-## Security and privacy boundary
+To scan the QR code with a physical phone, set `MPV_ORIGIN` to an HTTPS address that reaches this service from the phone. Motion APIs generally require a secure context; plain LAN HTTP is not a reliable physical-device test environment.
 
-The service verifies satisfaction of a fresh interaction; it does **not** prove
-humanity or attest that sensor data came from physical hardware. Modified
-browsers, virtual sensors, relays, device farms, and challenge-aware automation
-remain in scope as limitations. Protected actions occur only after server-side,
-origin/action/transaction-bound, atomic single-use redemption. QR bearer data is
-placed in the URL fragment, cleared before connection, and stored only as a
-SHA-256 digest. Raw motion samples are evaluated in request memory and are not
-logged or persisted. Sessions and QR links expire after at most 120 seconds.
-Successful result tokens have a separate five-minute lifetime beginning at
-completion.
+```sh
+npm test
+npm run typecheck
+npm run build
+npm run test:e2e
+```
 
-Production deployment would require durable atomic storage, customer key
-management, rate limiting, TLS, retention jobs, and completed physical-device,
-accessibility, load, and security audits described in the implementation plan.
-Those empirical gates are intentionally not claimed by this local MVP.
+## What is implemented
+
+- Direct motion permission, fresh-reading probe, calibration, three-target challenge, retry, interruption, and neutral failure recovery
+- One-time QR handoff, phone ownership lease, heartbeat, replacement revocation, server-authored status events, and desktop completion
+- Merchant-controlled motion-independent verification with brute-force limits
+- Opaque, origin/action/transaction-bound results with five-minute expiry, atomic single use, and scoped idempotency
+- A reusable `<motion-presence>` custom element and typed backend redemption client
+- Durable SQLite aggregate telemetry, retention support, and a local operator view with no raw motion or bearer credentials
+- Request limits, body limits, origin checks, capability separation, security headers, and fail-closed behavior
+- Responsive checkout and verification interfaces with keyboard, focus, reduced-motion, and automated accessibility coverage
+
+See [integration documentation](docs/integration.md), [privacy and retention](docs/privacy-and-retention.md), [threat model](docs/threat-model.md), and [compatibility notes](docs/compatibility.md).
+
+## Deployment boundary
+
+The included service is a complete single-node product and reference integration suitable for local evaluation and controlled pilots. A horizontally scaled hosted deployment must replace the in-memory live session repository and event fan-out with shared atomic infrastructure such as Redis, provision managed durable storage, terminate TLS, rotate customer secrets, and complete the physical-device and operational acceptance gates in the implementation plan.

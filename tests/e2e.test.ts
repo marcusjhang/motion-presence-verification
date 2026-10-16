@@ -23,8 +23,9 @@ const make = (call: any, transactionId: string) => call("/v1/sessions", { method
 test("alternative evidence authorizes exactly one protected purchase", async () => {
   const { server, call } = await fixture(); try {
     const made = await make(call, "tx-alt");
-    assert.equal((await call("/demo/alternative", { method: "POST", body: JSON.stringify({ sessionId: made.data.sessionId, transactionId: "tx-alt", code: "wrong" }) })).status, 401);
-    const verified = await call("/demo/alternative", { method: "POST", body: JSON.stringify({ sessionId: made.data.sessionId, transactionId: "tx-alt", code: "test-only-code" }) });
+    const route = await call(`/v1/sessions/${made.data.sessionId}/alternative-begin`, { method: "POST" }), headers = { "x-alternative-token": route.data.alternativeToken };
+    assert.equal((await call("/demo/alternative", { method: "POST", headers, body: JSON.stringify({ sessionId: made.data.sessionId, code: "wrong" }) })).status, 401);
+    const verified = await call("/demo/alternative", { method: "POST", headers, body: JSON.stringify({ sessionId: made.data.sessionId, code: "test-only-code" }) });
     assert.equal((await call("/demo/purchase", { method: "POST", body: JSON.stringify({ resultToken: verified.data.resultToken, transactionId: "tx-alt" }) })).status, 200);
     assert.equal((await call("/demo/purchase", { method: "POST", body: JSON.stringify({ resultToken: verified.data.resultToken, transactionId: "other" }) })).status, 403);
   } finally { server.close(); }
@@ -49,6 +50,15 @@ test("connected phone owns attempt invalidation", async () => {
     const connected = await call("/v1/handoffs/connect", { method: "POST", body: JSON.stringify({ sessionId: made.data.sessionId, token: new URL(handoff.data.link).hash.slice(1), phoneId: "phone" }) });
     assert.equal((await call(`/v1/sessions/${made.data.sessionId}/attempts`, { method: "POST", body: JSON.stringify({ invalidate: true }) })).status, 401);
     assert.equal((await call(`/v1/sessions/${made.data.sessionId}/attempts`, { method: "POST", headers: { "x-phone-lease": connected.data.phoneLease }, body: JSON.stringify({ invalidate: true }) })).status, 200);
+  } finally { server.close(); }
+});
+
+test("choosing the alternative route revokes the active phone", async () => {
+  const { server, call } = await fixture(); try {
+    const made = await make(call, "tx-switch"), handoff = await call(`/v1/sessions/${made.data.sessionId}/handoff`, { method: "POST" });
+    const connected = await call("/v1/handoffs/connect", { method: "POST", body: JSON.stringify({ sessionId: made.data.sessionId, token: new URL(handoff.data.link).hash.slice(1), phoneId: "phone" }) });
+    assert.equal((await call(`/v1/sessions/${made.data.sessionId}/alternative-begin`, { method: "POST" })).status, 200);
+    assert.equal((await call(`/v1/sessions/${made.data.sessionId}/heartbeat`, { method: "POST", headers: { "x-phone-lease": connected.data.phoneLease } })).status, 401);
   } finally { server.close(); }
 });
 
@@ -78,5 +88,27 @@ test("state-changing API rejects requests without an Origin", async () => {
   const { server } = await fixture(); try {
     const response = await fetch(`http://localhost:${(server.address() as any).port}/v1/sessions`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(response.status, 403);
+  } finally { server.close(); }
+});
+
+test("desktop receives server-authored handoff status events", async () => {
+  const { server, call } = await fixture(); const controller = new AbortController(); try {
+    const made = await make(call, "tx-events"), port = (server.address() as any).port;
+    const stream = await fetch(`http://localhost:${port}/v1/sessions/${made.data.sessionId}/events`, { signal: controller.signal, headers: { "x-session-token": made.data.sessionToken } });
+    assert.equal(stream.status, 200); const reader = stream.body!.getReader(), decoder = new TextDecoder();
+    assert.match(decoder.decode((await reader.read()).value), /event: status/);
+    const handoff = await call(`/v1/sessions/${made.data.sessionId}/handoff`, { method: "POST" });
+    const link = new URL(handoff.data.link);
+    await call("/v1/handoffs/connect", { method: "POST", body: JSON.stringify({ sessionId: made.data.sessionId, token: link.hash.slice(1), phoneId: "event-phone" }) });
+    let events = ""; for (let index = 0; index < 3 && !events.includes("connected"); index++) events += decoder.decode((await reader.read()).value);
+    assert.match(events, /event: connected/);
+  } finally { controller.abort(); server.close(); }
+});
+
+test("attempt rate limits fail closed with retry guidance", async () => {
+  const { server, call } = await fixture(); try {
+    const made = await make(call, "tx-rate"); let last: { status: number; data: any } = { status: 0, data: {} };
+    for (let index = 0; index < 13; index++) last = await call(`/v1/sessions/${made.data.sessionId}/attempts`, { method: "POST", body: JSON.stringify({ invalidate: true }) });
+    assert.equal(last.status, 429); assert.equal(last.data.code, "RATE_LIMITED");
   } finally { server.close(); }
 });
